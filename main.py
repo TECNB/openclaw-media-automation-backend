@@ -5,7 +5,7 @@ import os
 import logging
 import sys
 import json
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel
 import requests
 from typing import Optional, List, Union
@@ -72,7 +72,8 @@ class DownloadRequest(BaseModel):
 class VerifyLogRequest(BaseModel):
     keyword: str
     season: Optional[Union[str, int]] = None
-    timeout_seconds: int = 20
+    series_id: Optional[int] = None  # 新增: 需要此字段来触发 Sonarr 重新扫描
+    timeout_seconds: int = 40
 
 # ==========================================
 # 3. 业务服务 (Services)
@@ -129,6 +130,28 @@ class SonarrService:
         except Exception as e:
             logger.error(f"[Sonarr] Search failed: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
+    
+    def get_series_id_by_title(self, title: str) -> Optional[int]:
+        """
+        辅助方法：根据标题查找库中已存在的剧集 ID。
+        用于在 verify 接口未传入 series_id 时的自动补全。
+        """
+        try:
+            # 复用 search 方法进行查找
+            results = self.search(title)
+            # 1. 尝试完全匹配且在库中的
+            for item in results:
+                if item.get('existing_id') and item.get('title').lower() == title.lower():
+                    return item.get('existing_id')
+            
+            # 2. 如果没有完全匹配，返回第一个在库中的结果 (模糊匹配)
+            for item in results:
+                if item.get('existing_id'):
+                    return item.get('existing_id')
+                    
+        except Exception as e:
+            logger.error(f"[Sonarr] Failed to lookup series ID by title: {e}")
+        return None
 
     def add_series(self, tvdb_id: int):
         logger.info(f"[Sonarr] Attempting to add series TVDB ID: {tvdb_id}")
@@ -209,6 +232,29 @@ class SonarrService:
         except Exception as e:
             logger.error(f"[Sonarr] Trigger download failed: {str(e)}")
             raise
+
+    def rescan_series(self, series_id: int):
+        """
+        触发指定剧集的 'RescanSeries' 命令。
+        作为后台任务运行。
+        """
+        if not series_id:
+            logger.warning("[Sonarr] Cannot rescan series: No series_id provided.")
+            return
+
+        logger.info(f"[Sonarr] Background Task: Triggering RescanSeries for ID {series_id}")
+        payload = {
+            "name": "RescanSeries",
+            "seriesId": series_id
+        }
+        
+        try:
+            resp = requests.post(f"{SONARR_BASE_URL}/command", headers=COMMON_HEADERS, json=payload, timeout=10)
+            resp.raise_for_status()
+            logger.info(f"[Sonarr] Background Task: Rescan initiated successfully for Series ID {series_id}")
+        except Exception as e:
+            logger.error(f"[Sonarr] Background Task Failed: Could not rescan series {series_id}. Error: {str(e)}")
+
 
     def _extract_seasons(self, series_data):
         seasons = []
@@ -371,9 +417,33 @@ def api_download(req: DownloadRequest):
 
 # --- Pikpak Routes ---
 @app.post("/pikpak/verify")
-def api_verify_log(req: VerifyLogRequest):
-    logger.info(f"<<< [API START] /pikpak/verify | Keyword: {req.keyword}")
+def api_verify_log(req: VerifyLogRequest, background_tasks: BackgroundTasks):
+    """
+    检查日志以确认下载状态。
+    如果状态是 'success' 并且提供了 'series_id'，
+    则在后台触发 Sonarr 剧集重新扫描 (Rescan Series)。
+    如果 series_id 为 None，尝试根据 keyword 自动反查 ID。
+    """
+    logger.info(f"<<< [API START] /pikpak/verify | Keyword: {req.keyword}, Series ID: {req.series_id}")
+    
+    # 1. 执行验证 (虽然是阻塞操作，但检查日志通常很快)
     result = pikpak_service.verify_download_start(req.keyword, req.season, req.timeout_seconds)
+    
+    # 2. 检查成功状态 & 触发后台任务
+    if result.get("status") == "success":
+        target_series_id = req.series_id
+        
+        # 补救措施: 如果没有提供 ID，尝试通过标题查找
+        if not target_series_id:
+            logger.info(f"[API] No series_id provided. Attempting to lookup series ID for '{req.keyword}'...")
+            target_series_id = sonarr_service.get_series_id_by_title(req.keyword)
+            
+        if target_series_id:
+            logger.info(f"[API] Verification Success. Scheduling background rescan for Series ID: {target_series_id}")
+            background_tasks.add_task(sonarr_service.rescan_series, target_series_id)
+        else:
+            logger.warning("[API] Verification Success, but could not determine series_id. Skipping Sonarr rescan.")
+
     log_api_response("/pikpak/verify", req, result)
     return result
 

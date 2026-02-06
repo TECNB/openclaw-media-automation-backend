@@ -1,0 +1,102 @@
+# =========================
+# Secrets / Env
+# =========================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+secrets/
+secret/
+credentials*
+**/credentials*
+**/*_secret*
+**/*-secret*
+**/*secret*.json
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.log
+
+# Virtualenv / Conda
+.venv/
+venv/
+ENV/
+env/
+.conda/
+conda-bld/
+# local environment file
+environment.local.yml
+environment.local.yaml
+
+# =========================
+# FastAPI / Uvicorn
+# =========================
+*.pid
+uvicorn.log
+gunicorn.log
+logs/
+log/
+*.out
+
+# =========================
+# Editor / IDE
+# =========================
+.vscode/
+.idea/
+*.iml
+*.sublime-project
+*.sublime-workspace
+
+# =========================
+# OS / macOS
+# =========================
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# =========================
+# Jupyter / Notebooks
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Node (if you ever add it)
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# =========================
+# Docker (optional)
+# =========================
+*.tar
+docker-compose.override.yml
+docker-compose.override.yaml
